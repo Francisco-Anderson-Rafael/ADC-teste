@@ -1,0 +1,10 @@
+../Core/Src/main.c:97:6:AD7091R_Init	1
+../Core/Src/main.c:127:10:AD7091R_ReadData	2
+../Core/Src/main.c:188:10:get_filtered_reading	2
+../Core/Src/main.c:203:7:raw_to_voltage_mV	1
+../Core/Src/main.c:216:7:voltage_to_current_mA	3
+../Core/Src/main.c:241:6:serialPrint	1
+../Core/Src/main.c:252:5:main	1
+../Core/Src/main.c:327:6:SystemClock_Config	4
+../Core/Src/main.c:388:6:MPU_Config	1
+../Core/Src/main.c:419:6:Error_Handler	1
