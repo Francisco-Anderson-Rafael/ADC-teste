@@ -12,13 +12,14 @@
   * This software component is licensed by ST under BSD 3-Clause license,
   * the "License"; You may not use this file except in compliance with the
   * License. You may obtain a copy of the License at:
-  * opensource.org/licenses/BSD-3-Clause
+  *                        opensource.org/licenses/BSD-3-Clause
   *
   ******************************************************************************
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dac.h"
 #include "dma.h"
 #include "spi.h"
 #include "usart.h"
@@ -26,221 +27,124 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>  // Para sprintf
-#include <string.h> // Para strlen
-
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-// Definições do AD7091R e da escala 4-20 mA
-#define ADC_BITS         12                                // O AD7091R é um ADC de 12 bits
-#define ADC_MAX_VALUE    ((1 << ADC_BITS) - 1)             // Valor máximo para 12 bits (4095)
-#define VREF_MV          2500.0F                           // Tensão de referência do AD7091R em mV (2.5V típica para o CN0336)
+#define ADC_BITS              12
+#define ADC_MAX_VALUE         ((1 << ADC_BITS) - 1)   // 4095
+#define VREF_MV               2500.0f
 
-// Definições para a escala 4-20 mA
-#define MIN_CURRENT_MA   4.0F                              // Corrente mínima em mA
-#define MAX_CURRENT_MA   20.0F                             // Corrente máxima em mA
+#define MIN_CURRENT_MA        4.0f
+#define MAX_CURRENT_MA        20.0f
+#define MIN_VOLTAGE_ADC_MV    100.0f     // conforme CN0336 (0.1V)
+#define MAX_VOLTAGE_ADC_MV    2400.0f    // conforme CN0336 (2.4V)
 
+#define NUM_SAMPLES           30
 
-
-#define MIN_VOLTAGE_ADC_MV 0.0F                            // Tensão mínima esperada na entrada do ADC (0V)
-#define MAX_VOLTAGE_ADC_MV VREF_MV                         // Tensão máxima esperada na entrada do ADC (2.5V = VREF)
-
-
-#define AD7091R_CS_Pin       ADC_CS_Pin
-#define AD7091R_CS_Port      ADC_CS_GPIO_Port
-#define AD7091R_CONVST_Pin   GPIO_PIN_1 // Exemplo: PA1
-#define AD7091R_CONVST_Port  GPIOA      // Exemplo: GPIOA
-#define AD7091R_CMD_RESET    0xFFFF
-#define AD7091R_CMD_STANDBY  0x0000
-#define AD7091R_CMD_NORMAL   0x0020
-
-// Parâmetros de medição (para a função get_filtered_reading)
-#define NUM_SAMPLES 16         // Número de amostras para filtro de média móvel
+#define AD7091R_CS_Pin        ADC_CS_Pin
+#define AD7091R_CS_Port       ADC_CS_GPIO_Port
+#define AD7091R_CMD_RESET     0xFFFF
+#define AD7091R_CMD_NORMAL    0x0020
+//#define CALIBRATED_RAW_MIN    (uint16_t)325  // Exemplo: leitura do ADC para 4mA
+//#define CALIBRATED_RAW_MAX    (uint16_t)3875 // Exemplo: leitura do ADC para 20mA
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-char writeValue[128]; // Buffer para mensagens UART (aumentado para mensagens mais longas)
+char writeValue[128];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
-void AD7091R_Init(void);
 uint16_t AD7091R_ReadData(void);
 uint16_t get_filtered_reading(void);
-
+float raw_to_voltage_mV(uint16_t raw_value);
+float voltage_to_current_mA(float voltage_mv);
+void serialPrint(const char* message);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-/**
-  * @brief Inicializa o ADC AD7091R
-  * @note  Esta função configura o AD7091R para o modo de operação normal.
-  * Assume que os pinos CS e CONVST já foram configurados como GPIO Output
-  * e o SPI já foi inicializado via STM32CubeMX.
-  */
+
 void AD7091R_Init(void)
 {
-    // 1. Reset do ADC (comando 0xFFFF)
-    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_RESET); // CS LOW
-    uint16_t reset_cmd_tx = AD7091R_CMD_RESET; // O comando é de 16 bits
-    HAL_SPI_Transmit(&hspi1, (uint8_t*)&reset_cmd_tx, 2, HAL_MAX_DELAY); // Envia 2 bytes
-    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_SET); // CS HIGH
-    HAL_Delay(1); // Tempo de recuperação do reset
+    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_RESET);
+    uint16_t reset_cmd_tx = AD7091R_CMD_RESET;
+    HAL_SPI_Transmit(&hspi1, (uint8_t*)&reset_cmd_tx, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_SET);
+    HAL_Delay(100);
 
-    // 2. Configurar para modo normal de operação (comando 0x0020)
-    // O AD7091R entra em modo normal de operação após reset ou comando NORMAL.
-    // Para leituras contínuas, não é estritamente necessário enviar este comando
-    // a cada ciclo de leitura, apenas na inicialização.
-
-    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_RESET); // CS LOW
-    uint16_t normal_cmd_tx = AD7091R_CMD_NORMAL; // O comando é de 16 bits
-    HAL_SPI_Transmit(&hspi1, (uint8_t*)&normal_cmd_tx, 2, HAL_MAX_DELAY); // Envia 2 bytes
-    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_SET); // CS HIGH
-    HAL_Delay(1); // Pequeno atraso
-
-    // Garante que CONVST está em estado alto inicialmente
-    HAL_GPIO_WritePin(AD7091R_CONVST_Port, AD7091R_CONVST_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_RESET);
+    uint16_t normal_cmd_tx = AD7091R_CMD_NORMAL;
+    HAL_SPI_Transmit(&hspi1, (uint8_t*)&normal_cmd_tx, 2, HAL_MAX_DELAY);
+    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_SET);
 }
 
-/**
-  * @brief Lê um valor do AD7091R.
-  * Realiza um pulso no pino CONVST para iniciar a conversão
-  * e então lê os 16 bits de dados do ADC via SPI, extraindo os 12 bits válidos.
-  * @retval Valor digital de 12 bits (0 a 4095). Retorna 0 em caso de erro SPI.
-  */
 uint16_t AD7091R_ReadData(void)
 {
-    uint8_t rx_buf[2] = {0}; // Buffer para receber 2 bytes (16 bits)
-    uint16_t adc_raw_16bits; // Valor bruto de 16 bits lido
-    uint16_t adc_value_12bits; // Valor final de 12 bits
+    uint8_t rx_buf[2] = {0};
+    uint16_t adc_raw_16bits, adc_value_12bits;
 
-    // 1. Iniciar conversão (pulso baixo no CONVST)
-    HAL_GPIO_WritePin(AD7091R_CONVST_Port, AD7091R_CONVST_Pin, GPIO_PIN_RESET); // CONVST LOW
-    HAL_Delay(1);
-    HAL_GPIO_WritePin(AD7091R_CONVST_Port, AD7091R_CONVST_Pin, GPIO_PIN_SET);   // CONVST HIGH
+    HAL_Delay(100);
 
-    // 2. Esperar conversão completar
-    HAL_Delay(1);
-
-    // 3. Ler resultado via SPI
-    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_RESET); // CS LOW
-
-    // Envia 2 bytes dummy (0x00) e recebe 2 bytes do ADC.
+    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_RESET);
     if (HAL_SPI_Receive(&hspi1, rx_buf, 2, HAL_MAX_DELAY) != HAL_OK)
     {
-        // --- INÍCIO DA LÓGICA DO LED DE ERRO (VERMELHO) ---
-        HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_SET); // Garante CS HIGH em caso de erro
-
-        // Pisca o LED VERMELHO uma vez para indicar falha
-        HAL_GPIO_WritePin(ld2_GPIO_Port, ld2_Pin, GPIO_PIN_SET); // Liga LED Vermelho
-        HAL_Delay(100); // Fica ligado por 100ms
-        HAL_GPIO_WritePin(ld2_GPIO_Port, ld2_Pin, GPIO_PIN_RESET); // Desliga LED Vermelho
-
-        // Para evitar que o LED VERDE pisque em caso de erro, garantimos que ele esteja desligado
+        HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(ld2_GPIO_Port, ld2_Pin, GPIO_PIN_SET);  // LED erro
+        HAL_Delay(100);
         HAL_GPIO_WritePin(ld2_GPIO_Port, ld2_Pin, GPIO_PIN_RESET);
-
-        serialPrint("Erro na comunicacao SPI!\r\n"); // Mensagem de erro para o terminal
-        return 0; // Retorna 0 ou um valor de erro
+        serialPrint("Erro na comunicacao SPI!\r\n");
+        return 0;
     }
-    // --- FIM DA LÓGICA DO LED DE ERRO (VERMELHO) ---
+    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_SET);
 
-    HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_SET); // CS HIGH
+    HAL_GPIO_TogglePin(ld1_GPIO_Port, ld1_Pin);  // LED verde sucesso
 
-    // --- INÍCIO DA LÓGICA DO LED DE SUCESSO (VERDE) ---
-    // Pisca o LED VERDE uma vez para indicar sucesso
-    HAL_GPIO_TogglePin(ld1_GPIO_Port, ld1_Pin);
-    HAL_Delay(100);
-    /*HAL_GPIO_WritePin(ld1_GPIO_Port, ld1_Pin, GPIO_PIN_SET); // Liga LED Verde
-    HAL_Delay(500); // Fica ligado por 100ms
-    HAL_GPIO_WritePin(ld1_GPIO_Port, ld1_Pin, GPIO_PIN_RESET); // Desliga LED Verde*/
-
-    // Para evitar que o LED VERMELHO pisque, garantimos que ele esteja desligado
-    HAL_GPIO_WritePin(ld2_GPIO_Port, ld2_Pin, GPIO_PIN_RESET);
-    // --- FIM DA LÓGICA DO LED DE SUCESSO (VERDE) ---
-
-    // Combinar bytes e extrair os 12 bits de dados
-    adc_raw_16bits = (uint16_t)(rx_buf[0] << 8) | rx_buf[1];
-    adc_value_12bits = (adc_raw_16bits >> 2) & 0x0FFF; // Desloca 2 bits para a direita e máscara para 12 bits
+    adc_raw_16bits = (rx_buf[0] << 8) | rx_buf[1];
+    adc_value_12bits = (adc_raw_16bits >> 2) & 0x0FFF;
 
     return adc_value_12bits;
 }
 
-/**
-  * @brief Obtém leitura filtrada com média móvel
-  * @return Valor filtrado de 12 bits.
-  */
 uint16_t get_filtered_reading(void)
 {
     uint32_t sum = 0;
     for(uint8_t i = 0; i < NUM_SAMPLES; i++) {
         sum += AD7091R_ReadData();
-        HAL_Delay(1); // Pequeno atraso entre amostras
+        HAL_Delay(100);
     }
     return (uint16_t)(sum / NUM_SAMPLES);
 }
 
-/**
-  * @brief Converte valor bruto do ADC para tensão em milivolts (mV).
-  * @param raw_value Valor digital de 12 bits lido do ADC.
-  * @return Tensão em milivolts.
-  */
 float raw_to_voltage_mV(uint16_t raw_value)
 {
-    // Tensão (mV) = (Valor ADC / Valor Máximo ADC) * VREF (mV)
     return ((float)raw_value / ADC_MAX_VALUE) * VREF_MV;
 }
 
-/**
-  * @brief Converte tensão em milivolts para corrente em mA (escala 4-20 mA).
-  * Assume uma relação linear entre a tensão lida pelo ADC (0-2500mV)
-  * e a corrente (4-20mA).
-  * @param voltage_mv Tensão medida em milivolts.
-  * @return Corrente calculada em mA.
-  */
 float voltage_to_current_mA(float voltage_mv)
 {
-    // A fórmula de mapeamento linear é:
-    // Y = Y_min + ( (X - X_min) * (Y_max - Y_min) ) / (X_max - X_min)
-    // Onde:
-    // Y = current_ma (saída)
-    // X = voltage_mv (entrada)
-    // Y_min = MIN_CURRENT_MA = 4.0F
-    // Y_max = MAX_CURRENT_MA = 20.0F
-    // X_min = MIN_VOLTAGE_ADC_MV = 0.0F (assumindo 0V para 4mA na entrada do ADC)
-    // X_max = MAX_VOLTAGE_ADC_MV = 2500.0F (assumindo 2.5V para 20mA na entrada do ADC)
-
-    // garanta que a tensão está dentro da faixa esperada para evitar erros.
     if (voltage_mv < MIN_VOLTAGE_ADC_MV) voltage_mv = MIN_VOLTAGE_ADC_MV;
     if (voltage_mv > MAX_VOLTAGE_ADC_MV) voltage_mv = MAX_VOLTAGE_ADC_MV;
 
-    return MIN_CURRENT_MA + ((voltage_mv - MIN_VOLTAGE_ADC_MV) * (MAX_CURRENT_MA - MIN_CURRENT_MA)) / (MAX_VOLTAGE_ADC_MV - MIN_VOLTAGE_ADC_MV);
+    return 4.0f + ((voltage_mv - MIN_VOLTAGE_ADC_MV) * (16.0f / (MAX_VOLTAGE_ADC_MV - MIN_VOLTAGE_ADC_MV)));
 }
 
-
-/**
-  * @brief  Função para enviar strings para o terminal serial via UART.
-  * @param  message: Ponteiro para a string a ser enviada.
-  * @retval None
-  */
 void serialPrint(const char* message)
 {
-  HAL_UART_Transmit(&huart3, (uint8_t*)message, strlen(message), HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart3, (uint8_t*)message, strlen(message), HAL_MAX_DELAY);
 }
 
 /* USER CODE END 0 */
@@ -280,45 +184,34 @@ int main(void)
   MX_DMA_Init();
   MX_USART3_UART_Init();
   MX_SPI1_Init();
+  MX_DAC1_Init();
   /* USER CODE BEGIN 2 */
-  AD7091R_Init(); // Inicializa o ADC AD7091R
-  serialPrint("Sistema de aquisicao de dados 4-20 mA com STM32H753ZI inicializado...\r\n");
-  serialPrint("Configuracao completa. Aguardando leituras...\r\n");
-  serialPrint("---\r\n");
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    uint16_t raw_value = get_filtered_reading();
+    float voltage_mv = raw_to_voltage_mV(raw_value);
+    float current_ma = voltage_to_current_mA(voltage_mv);
+    float percentage = ((current_ma - MIN_CURRENT_MA) / (MAX_CURRENT_MA - MIN_CURRENT_MA)) * 100.0f;
+
+    sprintf(writeValue, "ADC:%4u | V:%.2fmV | I:%.2fmA | %%:%.1f\r\n", raw_value, voltage_mv, current_ma, percentage);
+    serialPrint(writeValue);
+    serialPrint("---\r\n");
+
+    HAL_Delay(1000);
+  }
+}
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    // 1. Obter leitura filtrada do ADC (valor RAW)
-    uint16_t raw_value = get_filtered_reading();
-    sprintf(writeValue, "RAW ADC (0-%d): %u\r\n", ADC_MAX_VALUE, raw_value);
-    serialPrint(writeValue);
 
-    // 2. Converter o valor RAW para Tensão em mV
-    float voltage_mv = raw_to_voltage_mV(raw_value);
-    sprintf(writeValue, "Tensao lida (mV): %.2f\r\n", voltage_mv);
-    serialPrint(writeValue);
 
-    // 3. Converter a Tensão para Corrente em mA
-    float current_ma = voltage_to_current_mA(voltage_mv);
-    sprintf(writeValue, "Corrente Calculada (mA): %.2f\r\n", current_ma);
-    serialPrint(writeValue);
-
-    // 4. Conversão da Corrente para Porcentagem (0-100%)
-    float percentage = ((current_ma - MIN_CURRENT_MA) / (MAX_CURRENT_MA - MIN_CURRENT_MA)) * 100.0F;
-    sprintf(writeValue, "Valor em Porcentagem (0-100%%): %.2f%%\r\n", percentage);
-    serialPrint(writeValue);
-
-    serialPrint("---\r\n"); // Separador para as leituras
-    HAL_Delay(1000); // Espera 1 segundo antes da próxima leitura
-  }
   /* USER CODE END 3 */
-}
+
 
 /**
   * @brief System Clock Configuration
