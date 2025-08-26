@@ -111,7 +111,7 @@ uint16_t AD7091R_ReadData(void)
     }
     HAL_GPIO_WritePin(AD7091R_CS_Port, AD7091R_CS_Pin, GPIO_PIN_SET);
 
-    HAL_GPIO_TogglePin(ld1_GPIO_Port, ld1_Pin);  // LED verde sucesso
+    HAL_GPIO_TogglePin(ld1_GPIO_Port, ld1_Pin);  // LED VERDE SUCESSO
 
     adc_raw_16bits = (rx_buf[0] << 8) | rx_buf[1];
     adc_value_12bits = (adc_raw_16bits >> 2) & 0x0FFF;

@@ -1245,7 +1245,7 @@ uint16_t AD7091R_ReadData(void)
  8000da8:	480d      	ldr	r0, [pc, #52]	@ (8000de0 <AD7091R_ReadData+0x9c>)
  8000daa:	f003 fde7 	bl	800497c <HAL_GPIO_WritePin>
 
-    HAL_GPIO_TogglePin(ld1_GPIO_Port, ld1_Pin);  // LED verde sucesso
+    HAL_GPIO_TogglePin(ld1_GPIO_Port, ld1_Pin);  // LED VERDE SUCESSO
  8000dae:	2101      	movs	r1, #1
  8000db0:	480d      	ldr	r0, [pc, #52]	@ (8000de8 <AD7091R_ReadData+0xa4>)
  8000db2:	f003 fdfc 	bl	80049ae <HAL_GPIO_TogglePin>
