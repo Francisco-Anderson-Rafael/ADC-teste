@@ -203,6 +203,9 @@ int main(void)
     serialPrint("---\r\n");
 
     HAL_Delay(1000);
+
+    HAL_GPIO_TogglePin(ld3_GPIO_Port, ld3_Pin);  // LED AZUL - Loop ativo
+    HAL_Delay(1000);
   }
 }
     /* USER CODE END WHILE */

@@ -5,6 +5,6 @@
 ../Core/Src/main.c:137:7:voltage_to_current_mA	3
 ../Core/Src/main.c:145:6:serialPrint	1
 ../Core/Src/main.c:156:5:main	1
-../Core/Src/main.c:220:6:SystemClock_Config	4
-../Core/Src/main.c:281:6:MPU_Config	1
-../Core/Src/main.c:312:6:Error_Handler	1
+../Core/Src/main.c:223:6:SystemClock_Config	4
+../Core/Src/main.c:284:6:MPU_Config	1
+../Core/Src/main.c:315:6:Error_Handler	1
